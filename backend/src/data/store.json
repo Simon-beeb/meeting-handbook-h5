@@ -1,0 +1,151 @@
+{
+  "admins": [
+    {
+      "username": "admin",
+      "password": "admin123",
+      "mustChangePassword": true,
+      "createdAt": "2026-09-21T00:00:00Z"
+    }
+  ],
+  "draft": {
+    "meeting": {
+      "title": "恒慧新格局 共赢新未来",
+      "subtitle": "TCL 空调 2027 冷年全球供应链生态大会",
+      "logoUrl": "https://upload.wikimedia.org/wikipedia/commons/3/32/TCL_logo.svg",
+      "backgroundUrl": ""
+    },
+    "modules": [
+      {
+        "id": "reminder",
+        "type": "reminder",
+        "title": "温馨提示",
+        "subtitle": "FRIENDLY REMINDER",
+        "content": "请提前 10 分钟入场。",
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "agenda",
+        "type": "agenda",
+        "title": "大会议程",
+        "subtitle": "AGENDA",
+        "content": [
+          {
+            "time": "13:30-13:35",
+            "topic": "会议开始"
+          },
+          {
+            "time": "13:35-13:40",
+            "topic": "欢迎致辞"
+          },
+          {
+            "time": "13:40-15:10",
+            "topic": "大咖讲座"
+          }
+        ],
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "seating",
+        "type": "seating",
+        "title": "座位表",
+        "subtitle": "SEATING CHART",
+        "content": "请按现场引导就座。",
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "live",
+        "type": "live",
+        "title": "照片直播",
+        "subtitle": "LIVE PHOTO",
+        "content": "直播链接待配置。",
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "intro",
+        "type": "intro",
+        "title": "介绍",
+        "subtitle": "INTRODUCTION",
+        "content": "会议介绍内容。",
+        "enabled": true,
+        "order": 5
+      }
+    ],
+    "updatedAt": "2026-09-21T00:00:00Z",
+    "publishedAt": "2026-09-21T00:00:00Z"
+  },
+  "published": {
+    "meeting": {
+      "title": "恒慧新格局 共赢新未来",
+      "subtitle": "TCL 空调 2027 冷年全球供应链生态大会",
+      "logoUrl": "https://upload.wikimedia.org/wikipedia/commons/3/32/TCL_logo.svg",
+      "backgroundUrl": ""
+    },
+    "modules": [
+      {
+        "id": "reminder",
+        "type": "reminder",
+        "title": "温馨提示",
+        "subtitle": "FRIENDLY REMINDER",
+        "content": "请提前 10 分钟入场。",
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "agenda",
+        "type": "agenda",
+        "title": "大会议程",
+        "subtitle": "AGENDA",
+        "content": [
+          {
+            "time": "13:30-13:35",
+            "topic": "会议开始"
+          },
+          {
+            "time": "13:35-13:40",
+            "topic": "欢迎致辞"
+          },
+          {
+            "time": "13:40-15:10",
+            "topic": "大咖讲座"
+          }
+        ],
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "seating",
+        "type": "seating",
+        "title": "座位表",
+        "subtitle": "SEATING CHART",
+        "content": "请按现场引导就座。",
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "live",
+        "type": "live",
+        "title": "照片直播",
+        "subtitle": "LIVE PHOTO",
+        "content": "直播链接待配置。",
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "intro",
+        "type": "intro",
+        "title": "介绍",
+        "subtitle": "INTRODUCTION",
+        "content": "会议介绍内容。",
+        "enabled": true,
+        "order": 5
+      }
+    ],
+    "updatedAt": "2026-09-21T00:00:00Z",
+    "publishedAt": "2026-09-21T00:00:00Z"
+  },
+  "auditLogs": []
+}

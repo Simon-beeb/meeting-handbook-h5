@@ -1,0 +1,17 @@
+{
+  "name": "会议手册 H5",
+  "short_name": "会议手册",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#031a77",
+  "theme_color": "#0a2fb8",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
