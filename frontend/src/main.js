@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import App from './App.vue'
 import './styles.css'
 import HomeView from './views/HomeView.vue'
@@ -10,7 +10,7 @@ import AdminDashboardView from './views/AdminDashboardView.vue'
 import { useAuthStore } from './stores/auth'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes: [
     { path: '/', name: 'home', component: HomeView },
     { path: '/module/:id', name: 'module', component: ModuleDetailView },
