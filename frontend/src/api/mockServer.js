@@ -1,10 +1,17 @@
 const CONFIG_KEY = 'meeting-h5-config-v1'
 const TOKEN_KEY = 'meeting-h5-admin-token'
 const LOGIN_USER_KEY = 'meeting-h5-admin-user'
+const LOGIN_ROLE_KEY = 'meeting-h5-admin-role'
+const LOGIN_FAIL_KEY = 'meeting-h5-admin-login-failures'
+
+const LOGIN_MAX_FAILURES = 5
+const LOGIN_LOCK_MINUTES = 10
+const LOGIN_LOCK_MS = LOGIN_LOCK_MINUTES * 60 * 1000
 
 const defaultAdmin = {
   username: 'admin',
   password: 'admin123',
+  role: 'super_admin',
   mustChangePassword: true,
   createdAt: new Date().toISOString()
 }
@@ -42,9 +49,14 @@ const defaultConfig = {
 function sanitizeAdminUser(user, index = 0) {
   const username = String(user?.username || '').trim() || `admin${index + 1}`
   const password = String(user?.password || '').trim() || 'admin123'
+  const role = user?.role === 'super_admin' || user?.role === 'admin'
+    ? user.role
+    : (index === 0 ? 'super_admin' : 'admin')
+
   return {
     username,
     password,
+    role,
     mustChangePassword: Boolean(user?.mustChangePassword) || password === 'admin123',
     createdAt: user?.createdAt || new Date().toISOString()
   }
@@ -110,6 +122,10 @@ function loadContainer() {
     const source = adminsFromList.length ? adminsFromList : legacyAdmin
     parsed.admins = source.length ? source.map(sanitizeAdminUser) : [structuredClone(defaultAdmin)]
 
+    if (!parsed.admins.some(item => item.role === 'super_admin')) {
+      parsed.admins[0].role = 'super_admin'
+    }
+
     parsed.draft = normalize(parsed.draft)
     parsed.published = normalize(parsed.published)
     parsed.auditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs.map(toLog).slice(0, 200) : []
@@ -154,17 +170,78 @@ function appendAudit(container, payload) {
   ].slice(0, 200)
 }
 
+function readLoginFailureState(username) {
+  const key = String(username || '').trim().toLowerCase()
+  if (!key) return null
+
+  const all = JSON.parse(localStorage.getItem(LOGIN_FAIL_KEY) || '{}')
+  const item = all[key]
+  if (!item) return null
+
+  if (item.lockedUntil && Date.now() >= item.lockedUntil) {
+    delete all[key]
+    localStorage.setItem(LOGIN_FAIL_KEY, JSON.stringify(all))
+    return null
+  }
+
+  return { key, all, item }
+}
+
+function increaseLoginFailure(username) {
+  const key = String(username || '').trim().toLowerCase()
+  const all = JSON.parse(localStorage.getItem(LOGIN_FAIL_KEY) || '{}')
+  const current = all[key] || { count: 0, lockedUntil: 0 }
+  current.count += 1
+  if (current.count >= LOGIN_MAX_FAILURES) {
+    current.lockedUntil = Date.now() + LOGIN_LOCK_MS
+  }
+  all[key] = current
+  localStorage.setItem(LOGIN_FAIL_KEY, JSON.stringify(all))
+  return current
+}
+
+function clearLoginFailure(username) {
+  const key = String(username || '').trim().toLowerCase()
+  if (!key) return
+  const all = JSON.parse(localStorage.getItem(LOGIN_FAIL_KEY) || '{}')
+  if (all[key]) {
+    delete all[key]
+    localStorage.setItem(LOGIN_FAIL_KEY, JSON.stringify(all))
+  }
+}
+
+function ensureSuperAdmin(container) {
+  if (!container.admins.some(item => item.role === 'super_admin')) {
+    container.admins[0].role = 'super_admin'
+  }
+}
+
 export async function loginAdmin(payload) {
+  const username = String(payload?.username || '').trim()
+  const lock = readLoginFailureState(username)
+  if (lock?.item?.lockedUntil) {
+    const seconds = Math.ceil((lock.item.lockedUntil - Date.now()) / 1000)
+    throw new Error(`登录失败次数过多，请 ${seconds} 秒后重试`)
+  }
+
   const container = loadContainer()
-  const account = container.admins.find(item => item.username === String(payload.username || '').trim())
+  const account = container.admins.find(item => item.username === username)
 
   if (!account || payload.password !== account.password) {
-    throw new Error('用户名或密码错误')
+    const failure = increaseLoginFailure(username)
+    if (failure.lockedUntil) {
+      throw new Error(`连续失败已锁定 ${LOGIN_LOCK_MINUTES} 分钟`)
+    }
+    const left = Math.max(0, LOGIN_MAX_FAILURES - failure.count)
+    throw new Error(`用户名或密码错误，还可尝试 ${left} 次`)
   }
+
+  clearLoginFailure(username)
 
   const token = `token-${Date.now()}`
   localStorage.setItem(TOKEN_KEY, token)
   localStorage.setItem(LOGIN_USER_KEY, account.username)
+  localStorage.setItem(LOGIN_ROLE_KEY, account.role)
   appendAudit(container, {
     actor: account.username,
     action: 'login',
@@ -172,12 +249,13 @@ export async function loginAdmin(payload) {
     detail: '管理员登录成功'
   })
   saveContainer(container)
-  return { token, username: account.username, forceChangePassword: account.mustChangePassword }
+  return { token, username: account.username, role: account.role, forceChangePassword: account.mustChangePassword }
 }
 
 export async function logoutAdmin() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(LOGIN_USER_KEY)
+  localStorage.removeItem(LOGIN_ROLE_KEY)
 }
 
 export function getSavedToken() {
@@ -186,6 +264,10 @@ export function getSavedToken() {
 
 export function getSavedUsername() {
   return localStorage.getItem(LOGIN_USER_KEY) || ''
+}
+
+export function getSavedRole() {
+  return localStorage.getItem(LOGIN_ROLE_KEY) || ''
 }
 
 export async function fetchPublishedConfig() {
@@ -255,15 +337,20 @@ export async function changePassword(payload) {
 export async function listAdminUsers() {
   const container = loadContainer()
   requireCurrentUser(container)
-  return container.admins.map(({ username, createdAt, mustChangePassword }) => ({ username, createdAt, mustChangePassword }))
+  return container.admins.map(({ username, role, createdAt, mustChangePassword }) => ({ username, role, createdAt, mustChangePassword }))
 }
 
 export async function createAdminUser(payload) {
   const container = loadContainer()
   const account = requireCurrentUser(container)
 
+  if (account.role !== 'super_admin') {
+    throw new Error('仅超级管理员可执行此操作')
+  }
+
   const username = String(payload?.username || '').trim()
   const password = String(payload?.password || '')
+  const role = payload?.role === 'super_admin' ? 'super_admin' : 'admin'
 
   if (!/^[a-zA-Z0-9_-]{3,30}$/.test(username)) {
     throw new Error('用户名需为 3-30 位字母、数字、下划线或中划线')
@@ -277,11 +364,12 @@ export async function createAdminUser(payload) {
     throw new Error('该用户名已存在')
   }
 
-  container.admins.push(sanitizeAdminUser({ username, password, mustChangePassword: true }))
+  container.admins.push(sanitizeAdminUser({ username, password, role, mustChangePassword: true }, container.admins.length))
+  ensureSuperAdmin(container)
   appendAudit(container, {
     actor: account.username,
     action: 'add_admin',
-    target: username,
+    target: `${username}(${role})`,
     detail: '新增管理员账号'
   })
   saveContainer(container)
@@ -291,6 +379,10 @@ export async function createAdminUser(payload) {
 export async function removeAdminUser(username) {
   const container = loadContainer()
   const account = requireCurrentUser(container)
+
+  if (account.role !== 'super_admin') {
+    throw new Error('仅超级管理员可执行此操作')
+  }
 
   const target = String(username || '').trim()
   if (!target) {
@@ -302,13 +394,18 @@ export async function removeAdminUser(username) {
     throw new Error('不能删除当前登录账号')
   }
 
-  const nextAdmins = container.admins.filter(item => item.username !== target)
-  if (nextAdmins.length === container.admins.length) {
+  const targetUser = container.admins.find(item => item.username === target)
+  if (!targetUser) {
     throw new Error('账号不存在')
   }
 
+  const nextAdmins = container.admins.filter(item => item.username !== target)
   if (!nextAdmins.length) {
     throw new Error('系统至少保留 1 个管理员')
+  }
+
+  if (targetUser.role === 'super_admin' && !nextAdmins.some(item => item.role === 'super_admin')) {
+    throw new Error('系统至少保留 1 个超级管理员')
   }
 
   container.admins = nextAdmins

@@ -5,6 +5,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || defaultApiBase).repla
 const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
 const TOKEN_KEY = 'meeting-h5-admin-token'
 const USERNAME_KEY = 'meeting-h5-admin-user'
+const ROLE_KEY = 'meeting-h5-admin-role'
 
 function getToken() {
   return localStorage.getItem(TOKEN_KEY) || ''
@@ -14,14 +15,20 @@ function getUsername() {
   return localStorage.getItem(USERNAME_KEY) || ''
 }
 
-function setAuth(token, username = '') {
+function getRole() {
+  return localStorage.getItem(ROLE_KEY) || ''
+}
+
+function setAuth(token, username = '', role = '') {
   if (!token) {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USERNAME_KEY)
+    localStorage.removeItem(ROLE_KEY)
     return
   }
   localStorage.setItem(TOKEN_KEY, token)
   localStorage.setItem(USERNAME_KEY, username || '')
+  localStorage.setItem(ROLE_KEY, role || '')
 }
 
 function createHttpError(response, message) {
@@ -64,7 +71,7 @@ export async function loginAdmin(payload) {
     method: 'POST',
     body: JSON.stringify(payload)
   })
-  setAuth(data.token || '', data.username || payload?.username || '')
+  setAuth(data.token || '', data.username || payload?.username || '', data.role || '')
   return data
 }
 
@@ -85,6 +92,11 @@ export function getSavedToken() {
 export function getSavedUsername() {
   if (USE_MOCK) return mock.getSavedUsername()
   return getUsername()
+}
+
+export function getSavedRole() {
+  if (USE_MOCK) return mock.getSavedRole()
+  return getRole()
 }
 
 export async function fetchPublishedConfig() {

@@ -14,6 +14,11 @@ const TOKEN_TTL_SECONDS = Number(process.env.TOKEN_TTL_SECONDS || 60 * 60 * 24 *
 const STORAGE_DRIVER = (process.env.STORAGE_DRIVER || 'local').toLowerCase()
 const UPLOAD_BASE_URL = process.env.UPLOAD_BASE_URL || ''
 
+const LOGIN_MAX_FAILURES = Number(process.env.LOGIN_MAX_FAILURES || 5)
+const LOGIN_LOCK_MINUTES = Number(process.env.LOGIN_LOCK_MINUTES || 10)
+const LOGIN_LOCK_MS = LOGIN_LOCK_MINUTES * 60 * 1000
+const loginFailures = new Map()
+
 const dataFile = path.resolve(process.cwd(), 'src/data/store.json')
 const uploadDir = path.resolve(process.cwd(), 'src/uploads')
 
@@ -49,9 +54,14 @@ app.use('/uploads', express.static(uploadDir))
 function sanitizeAdminUser(user, index = 0) {
   const username = String(user?.username || '').trim() || `admin${index + 1}`
   const password = String(user?.password || '').trim() || 'admin123'
+  const role = user?.role === 'super_admin' || user?.role === 'admin'
+    ? user.role
+    : (index === 0 ? 'super_admin' : 'admin')
+
   return {
     username,
     password,
+    role,
     mustChangePassword: Boolean(user?.mustChangePassword) || password === 'admin123',
     createdAt: user?.createdAt || new Date().toISOString()
   }
@@ -71,11 +81,15 @@ function sanitizeAdmins(store) {
   })
 
   if (!dedup.size) {
-    const fallback = sanitizeAdminUser({ username: 'admin', password: 'admin123', mustChangePassword: true })
+    const fallback = sanitizeAdminUser({ username: 'admin', password: 'admin123', role: 'super_admin', mustChangePassword: true }, 0)
     dedup.set(fallback.username, fallback)
   }
 
-  return Array.from(dedup.values())
+  const list = Array.from(dedup.values())
+  if (!list.some(item => item.role === 'super_admin')) {
+    list[0].role = 'super_admin'
+  }
+  return list
 }
 
 function sanitizeHandbook(handbook) {
@@ -204,7 +218,19 @@ function auth(req, res, next) {
     return
   }
 
-  req.user = { ...payload, mustChangePassword: account.mustChangePassword }
+  req.user = {
+    ...payload,
+    role: account.role,
+    mustChangePassword: account.mustChangePassword
+  }
+  next()
+}
+
+function requireSuperAdmin(req, res, next) {
+  if (req.user?.role !== 'super_admin') {
+    res.status(403).json({ message: '仅超级管理员可执行此操作' })
+    return
+  }
   next()
 }
 
@@ -217,22 +243,68 @@ function resolveUploadedUrl(filename, req) {
   return `${host}/uploads/${filename}`
 }
 
+function lockKey(username, req) {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'
+  return `${String(username || '').trim().toLowerCase()}::${String(ip)}`
+}
+
+function readLockState(key) {
+  const item = loginFailures.get(key)
+  if (!item) return null
+  if (item.lockedUntil && Date.now() >= item.lockedUntil) {
+    loginFailures.delete(key)
+    return null
+  }
+  return item
+}
+
+function increaseFailure(key) {
+  const now = Date.now()
+  const current = readLockState(key)
+  const nextCount = (current?.count || 0) + 1
+  const lockedUntil = nextCount >= LOGIN_MAX_FAILURES ? now + LOGIN_LOCK_MS : 0
+  loginFailures.set(key, { count: nextCount, lockedUntil })
+  return { count: nextCount, lockedUntil }
+}
+
+function clearFailure(key) {
+  loginFailures.delete(key)
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, now: new Date().toISOString(), storage: STORAGE_DRIVER })
 })
 
 app.post('/api/auth/login', (req, res) => {
   const { username = '', password = '' } = req.body || {}
+  const key = lockKey(username, req)
+  const locked = readLockState(key)
+
+  if (locked?.lockedUntil) {
+    const seconds = Math.ceil((locked.lockedUntil - Date.now()) / 1000)
+    res.status(429).json({ message: `登录失败次数过多，请 ${seconds} 秒后重试` })
+    return
+  }
+
   const store = readStore()
   const account = store.admins.find(item => item.username === String(username).trim())
 
   if (!account || password !== account.password) {
-    res.status(401).json({ message: '用户名或密码错误' })
+    const failure = increaseFailure(key)
+    if (failure.lockedUntil) {
+      res.status(429).json({ message: `连续失败已锁定 ${LOGIN_LOCK_MINUTES} 分钟` })
+      return
+    }
+    const left = Math.max(0, LOGIN_MAX_FAILURES - failure.count)
+    res.status(401).json({ message: `用户名或密码错误，还可尝试 ${left} 次` })
     return
   }
 
+  clearFailure(key)
+
   const payload = {
     username: account.username,
+    role: account.role,
     exp: Date.now() + TOKEN_TTL_SECONDS * 1000
   }
 
@@ -245,7 +317,12 @@ app.post('/api/auth/login', (req, res) => {
   writeStore(store)
 
   const token = signToken(payload)
-  res.json({ token, username: account.username, forceChangePassword: account.mustChangePassword })
+  res.json({
+    token,
+    username: account.username,
+    role: account.role,
+    forceChangePassword: account.mustChangePassword
+  })
 })
 
 app.post('/api/auth/logout', auth, (_req, res) => {
@@ -286,12 +363,13 @@ app.post('/api/auth/change-password', auth, (req, res) => {
 
 app.get('/api/admin/users', auth, (_req, res) => {
   const store = readStore()
-  res.json(store.admins.map(({ username, createdAt, mustChangePassword }) => ({ username, createdAt, mustChangePassword })))
+  res.json(store.admins.map(({ username, role, createdAt, mustChangePassword }) => ({ username, role, createdAt, mustChangePassword })))
 })
 
-app.post('/api/admin/users', auth, (req, res) => {
-  const { username = '', password = '' } = req.body || {}
+app.post('/api/admin/users', auth, requireSuperAdmin, (req, res) => {
+  const { username = '', password = '', role = 'admin' } = req.body || {}
   const cleanName = String(username).trim()
+  const cleanRole = role === 'super_admin' ? 'super_admin' : 'admin'
 
   if (!/^[a-zA-Z0-9_-]{3,30}$/.test(cleanName)) {
     res.status(400).json({ message: '用户名需为 3-30 位字母、数字、下划线或中划线' })
@@ -309,18 +387,52 @@ app.post('/api/admin/users', auth, (req, res) => {
     return
   }
 
-  store.admins.push(sanitizeAdminUser({ username: cleanName, password: String(password), mustChangePassword: true }))
+  store.admins.push(sanitizeAdminUser({ username: cleanName, password: String(password), role: cleanRole, mustChangePassword: true }, store.admins.length))
   appendAudit(store, {
     actor: req.user.username,
     action: 'add_admin',
-    target: cleanName,
+    target: `${cleanName}(${cleanRole})`,
     detail: '新增管理员账号'
   })
   writeStore(store)
   res.status(201).json({ success: true })
 })
 
-app.delete('/api/admin/users/:username', auth, (req, res) => {
+app.patch('/api/admin/users/:username/role', auth, requireSuperAdmin, (req, res) => {
+  const target = String(req.params.username || '').trim()
+  const role = req.body?.role === 'super_admin' ? 'super_admin' : 'admin'
+
+  const store = readStore()
+  const index = store.admins.findIndex(item => item.username === target)
+
+  if (index < 0) {
+    res.status(404).json({ message: '账号不存在' })
+    return
+  }
+
+  if (target === req.user.username && role !== 'super_admin') {
+    res.status(400).json({ message: '不能将自己降级为普通管理员' })
+    return
+  }
+
+  const superCount = store.admins.filter(item => item.role === 'super_admin').length
+  if (store.admins[index].role === 'super_admin' && role !== 'super_admin' && superCount <= 1) {
+    res.status(400).json({ message: '系统至少保留 1 个超级管理员' })
+    return
+  }
+
+  store.admins[index].role = role
+  appendAudit(store, {
+    actor: req.user.username,
+    action: 'set_role',
+    target: `${target}(${role})`,
+    detail: '修改管理员角色'
+  })
+  writeStore(store)
+  res.json({ success: true })
+})
+
+app.delete('/api/admin/users/:username', auth, requireSuperAdmin, (req, res) => {
   const target = String(req.params.username || '').trim()
   const store = readStore()
 
@@ -334,14 +446,21 @@ app.delete('/api/admin/users/:username', auth, (req, res) => {
     return
   }
 
-  const nextAdmins = store.admins.filter(item => item.username !== target)
-  if (nextAdmins.length === store.admins.length) {
+  const current = store.admins.find(item => item.username === target)
+  if (!current) {
     res.status(404).json({ message: '账号不存在' })
     return
   }
 
+  const nextAdmins = store.admins.filter(item => item.username !== target)
+
   if (!nextAdmins.length) {
     res.status(400).json({ message: '系统至少保留 1 个管理员' })
+    return
+  }
+
+  if (current.role === 'super_admin' && !nextAdmins.some(item => item.role === 'super_admin')) {
+    res.status(400).json({ message: '系统至少保留 1 个超级管理员' })
     return
   }
 
@@ -389,7 +508,7 @@ app.put('/api/handbook/draft', auth, (req, res) => {
   res.json(store.draft)
 })
 
-app.post('/api/handbook/publish', auth, (_req, res) => {
+app.post('/api/handbook/publish', auth, (req, res) => {
   const store = readStore()
   const now = new Date().toISOString()
 

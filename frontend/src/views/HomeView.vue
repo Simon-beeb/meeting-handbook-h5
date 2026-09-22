@@ -23,7 +23,7 @@
       </button>
     </section>
 
-    <button class="admin-entry" @click="router.push('/admin/login')">管理员入口</button>
+    <button v-if="showAdminEntry" class="admin-entry" @click="router.push('/admin/login')">管理员入口</button>
   </main>
 </template>
 
@@ -69,5 +69,12 @@ const isPhoneLike = computed(() => {
   if (typeof window === 'undefined') return false
   const ua = window.navigator.userAgent || ''
   return /Mobile|Android|iPhone|iPad/i.test(ua) || window.innerWidth <= 768
+})
+
+const showAdminEntry = computed(() => {
+  if (import.meta.env.VITE_SHOW_ADMIN_ENTRY === 'true') return true
+  if (typeof window === 'undefined') return false
+  const search = new URLSearchParams(window.location.search)
+  return search.get('admin') === '1'
 })
 </script>

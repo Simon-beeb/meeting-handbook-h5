@@ -4,7 +4,8 @@
       "username": "admin",
       "password": "admin123",
       "mustChangePassword": true,
-      "createdAt": "2026-09-21T00:00:00Z"
+      "createdAt": "2026-09-21T00:00:00Z",
+      "role": "super_admin"
     }
   ],
   "draft": {

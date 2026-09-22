@@ -117,18 +117,25 @@
 
     <section id="sec-admins" class="admin-card">
       <h3>管理员管理</h3>
+      <p class="status-text">当前身份：{{ authStore.isSuperAdmin ? '超级管理员' : '普通管理员' }}</p>
       <div class="module-row">
-        <input v-model="newAdminName" class="text-input" placeholder="新管理员用户名" />
-        <input v-model="newAdminPassword" class="text-input" type="password" placeholder="初始密码（至少6位）" />
+        <input v-model="newAdminName" class="text-input" placeholder="新管理员用户名" :disabled="!authStore.isSuperAdmin" />
+        <input v-model="newAdminPassword" class="text-input" type="password" placeholder="初始密码（至少6位）" :disabled="!authStore.isSuperAdmin" />
       </div>
-      <button class="primary-btn" @click="addAdmin">添加管理员</button>
+      <label class="field-label">新账号角色</label>
+      <select v-model="newAdminRole" class="text-input" :disabled="!authStore.isSuperAdmin">
+        <option value="admin">普通管理员</option>
+        <option value="super_admin">超级管理员</option>
+      </select>
+      <button class="primary-btn" :disabled="!authStore.isSuperAdmin" @click="addAdmin">添加管理员</button>
       <div class="admin-user-list">
         <article class="admin-user-item" v-for="item in adminUsers" :key="item.username">
           <div>
             <strong>{{ item.username }}</strong>
+            <p class="status-text">角色：{{ item.role === 'super_admin' ? '超级管理员' : '普通管理员' }}</p>
             <p class="status-text">{{ item.mustChangePassword ? '首次登录需改密' : '可正常登录' }}</p>
           </div>
-          <button class="secondary-btn" :disabled="item.username === selfName" @click="removeAdmin(item.username)">移除</button>
+          <button class="secondary-btn" :disabled="item.username === selfName || !authStore.isSuperAdmin" @click="removeAdmin(item.username)">移除</button>
         </article>
       </div>
     </section>
@@ -198,6 +205,7 @@ const errorMessage = ref('')
 const adminUsers = ref([])
 const newAdminName = ref('')
 const newAdminPassword = ref('')
+const newAdminRole = ref('admin')
 const selfName = ref('')
 const auditLogs = ref([])
 const showForceDialog = ref(false)
@@ -232,6 +240,7 @@ function translateAction(action) {
     change_password: '修改密码',
     add_admin: '新增管理员',
     remove_admin: '移除管理员',
+    set_role: '修改角色',
     save_draft: '保存草稿',
     publish: '发布内容',
     upload_image: '上传图片'
@@ -316,25 +325,11 @@ async function onImageChange(event, field) {
 async function refreshAdmins() {
   const users = await listAdminUsers()
   adminUsers.value = users
-  selfName.value = authStore.username || decodeSelfName()
+  selfName.value = authStore.username || ''
 }
 
 async function refreshLogs() {
   auditLogs.value = await listAuditLogs()
-}
-
-function decodeSelfName() {
-  const token = authStore.token || ''
-  const body = token.split('.')[0]
-  if (!body) return ''
-  try {
-    const base64 = body.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
-    const json = JSON.parse(atob(padded))
-    return json.username || ''
-  } catch {
-    return ''
-  }
 }
 
 async function addAdmin() {
@@ -342,10 +337,12 @@ async function addAdmin() {
     errorMessage.value = ''
     await createAdminUser({
       username: newAdminName.value.trim(),
-      password: newAdminPassword.value
+      password: newAdminPassword.value,
+      role: newAdminRole.value
     })
     newAdminName.value = ''
     newAdminPassword.value = ''
+    newAdminRole.value = 'admin'
     await Promise.all([refreshAdmins(), refreshLogs()])
     handbookStore.saveMessage = '管理员已添加'
   } catch (error) {
